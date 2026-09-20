@@ -1,0 +1,28 @@
+# PixelPresence ⇄ Hermes integration.
+#
+# Paste this block into ~/.hermes/config.yaml (or apply it with the `hermes
+# config set` lines in the README) to feed Hermes lifecycle events into the
+# companion. One script serves every event; it resolves the state from
+# `hook_event_name`.
+#
+# `timeout: 5` keeps a stuck script from stalling a tool call. The hook fails
+# open: a crash or timeout logs a warning and the agent continues.
+hooks:
+  pre_llm_call:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  post_llm_call:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  pre_tool_call:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  post_tool_call:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  pre_approval_request:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  on_session_end:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
