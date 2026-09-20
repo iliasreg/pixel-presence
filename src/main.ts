@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -16,12 +17,7 @@ root.innerHTML = `
     </div>
 
     <button class="pixel-pet" type="button" aria-label="PixelPresence companion">
-      <span class="antenna" aria-hidden="true"></span>
-      <span class="pet-body" aria-hidden="true">
-        <span class="pet-eye left"></span>
-        <span class="pet-eye right"></span>
-        <span class="pet-mouth"></span>
-      </span>
+      <span class="pet-art" aria-hidden="true"></span>
     </button>
 
     <p class="hint">drag me</p>
@@ -30,6 +26,12 @@ root.innerHTML = `
 
 const pet = document.querySelector<HTMLButtonElement>(".pixel-pet");
 const hint = document.querySelector<HTMLParagraphElement>(".hint");
+
+root.addEventListener("pointerdown", (event) => {
+  if (event.button === 0) {
+    void getCurrentWindow().startDragging();
+  }
+});
 
 pet?.addEventListener("click", () => {
   hint?.classList.add("visible");
