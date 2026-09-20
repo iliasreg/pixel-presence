@@ -16,12 +16,7 @@ root.innerHTML = `
     </div>
 
     <button class="pixel-pet" type="button" aria-label="PixelPresence companion">
-      <span class="antenna" aria-hidden="true"></span>
-      <span class="pet-body" aria-hidden="true">
-        <span class="pet-eye left"></span>
-        <span class="pet-eye right"></span>
-        <span class="pet-mouth"></span>
-      </span>
+      <span class="pet-art" aria-hidden="true"></span>
     </button>
 
     <p class="hint">drag me</p>
