@@ -59,10 +59,38 @@ def state_path() -> Path:
     return Path(override) if override else DEFAULT_STATE_FILE
 
 
+def trace(payload: dict, state: str, detail: str | None) -> None:
+    """Append what Hermes actually delivered, for latency work.
+
+    Enabled only when PIXELPRESENCE_LOG names a file, so the normal path stays
+    a single read and a single write.
+    """
+    target = os.environ.get("PIXELPRESENCE_LOG")
+    if not target:
+        return
+    try:
+        entry = {
+            "received_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "event": payload.get("hook_event_name"),
+            "tool": payload.get("tool_name"),
+            "state": state,
+            "detail": detail,
+            "session_id": payload.get("session_id"),
+            "hook_timestamp": payload.get("timestamp"),
+            "status": (payload.get("extra") or {}).get("status"),
+        }
+        with open(target, "a") as handle:
+            handle.write(json.dumps(entry) + "\n")
+    except Exception:  # noqa: BLE001 - tracing must never break the hook
+        pass
+
+
 def write(payload: dict) -> None:
     state, detail = resolve(payload)
     if state not in STATES:
         return
+
+    trace(payload, state, detail)
 
     event = {
         "version": 1,
@@ -72,7 +100,7 @@ def write(payload: dict) -> None:
         "label": detail or None,
         "session_id": payload.get("session_id"),
         "profile": payload.get("profile"),
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     }
 
     target = state_path()
