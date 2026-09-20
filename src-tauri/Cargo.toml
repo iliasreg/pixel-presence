@@ -1,8 +1,8 @@
 [package]
-name = "homeilprojectspixel-presence"
+name = "pixel-presence"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Retro desktop companion for AI agents"
+authors = ["UE"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
