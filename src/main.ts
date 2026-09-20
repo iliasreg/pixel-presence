@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
@@ -8,6 +9,14 @@ type CompanionState = (typeof STATES)[number];
 
 const SUCCESS_HOLD_MS = 5000;
 const DETAIL_LIMIT = 22;
+const ACTIVITY_TEXT: Record<CompanionState, string> = {
+  idle: "resting",
+  thinking: "thinking",
+  working: "working",
+  waiting: "waiting for you",
+  success: "finished",
+  error: "something went wrong",
+};
 
 const root = document.querySelector<HTMLDivElement>("#app");
 
@@ -17,54 +26,82 @@ if (!root) {
 
 root.innerHTML = `
   <main class="companion" aria-label="PixelPresence companion">
-    <div class="status-bubble">
-      <span class="status-dot" aria-hidden="true"></span>
-      <span class="status-agent">hermes</span>
-      <span class="status-divider">·</span>
-      <span class="status-state">idle</span>
+    <div class="dialogue-box" aria-live="polite">
+      <span class="dialogue-text">resting</span>
     </div>
 
     <button class="pixel-pet" type="button" data-state="idle" aria-label="PixelPresence companion">
       <span class="pet-art" aria-hidden="true"></span>
     </button>
 
-    <p class="hint">drag me</p>
+    <div class="context-menu" role="menu" hidden>
+      <button class="context-menu-close" type="button" role="menuitem">Close</button>
+    </div>
   </main>
 `;
 
 const pet = document.querySelector<HTMLButtonElement>(".pixel-pet");
-const hint = document.querySelector<HTMLParagraphElement>(".hint");
-const agentLabel = document.querySelector<HTMLSpanElement>(".status-agent");
-const stateLabel = document.querySelector<HTMLSpanElement>(".status-state");
+const dialogue = document.querySelector<HTMLSpanElement>(".dialogue-text");
+const contextMenu = document.querySelector<HTMLDivElement>(".context-menu");
+const closeButton = document.querySelector<HTMLButtonElement>(".context-menu-close");
 
 let successTimer: number | undefined;
+
+function hideContextMenu() {
+  if (contextMenu) {
+    contextMenu.hidden = true;
+  }
+}
+
+function showContextMenu(event: MouseEvent) {
+  if (!contextMenu) {
+    return;
+  }
+
+  const bounds = root!.getBoundingClientRect();
+  contextMenu.style.left = `${Math.min(event.clientX - bounds.left, bounds.width - 86)}px`;
+  contextMenu.style.top = `${Math.min(event.clientY - bounds.top, bounds.height - 42)}px`;
+  contextMenu.hidden = false;
+}
 
 function isCompanionState(value: unknown): value is CompanionState {
   return typeof value === "string" && (STATES as readonly string[]).includes(value);
 }
 
-function render(state: CompanionState, detail?: string, agent?: string) {
+function activityText(state: CompanionState, detail?: string) {
+  if (!detail) {
+    return ACTIVITY_TEXT[state];
+  }
+
+  if (state === "working") {
+    return `using ${detail}`;
+  }
+
+  if (state === "error") {
+    return `${detail} failed`;
+  }
+
+  return ACTIVITY_TEXT[state];
+}
+
+function render(state: CompanionState, detail?: string) {
   pet?.setAttribute("data-state", state);
 
-  if (stateLabel) {
-    stateLabel.textContent = detail ? `${state} ${detail}` : state;
-  }
-
-  if (agentLabel && agent) {
-    agentLabel.textContent = agent;
+  if (dialogue) {
+    dialogue.textContent = activityText(state, detail);
   }
 }
 
-function show(state: CompanionState, detail?: string, agent?: string) {
+function show(state: CompanionState, detail?: string) {
   window.clearTimeout(successTimer);
-  render(state, detail, agent);
+  render(state, detail);
 
   if (state === "success") {
-    successTimer = window.setTimeout(() => render("idle", undefined, agent), SUCCESS_HOLD_MS);
+    successTimer = window.setTimeout(() => render("idle"), SUCCESS_HOLD_MS);
   }
 }
 
-listen<{ state?: unknown; label?: unknown; agent?: unknown }>("companion://state", (event) => {
+listen<{ state?: unknown; label?: unknown }>("companion://state", (event) => {
   const payload = event.payload;
 
   if (!isCompanionState(payload.state)) {
@@ -75,18 +112,21 @@ listen<{ state?: unknown; label?: unknown; agent?: unknown }>("companion://state
     typeof payload.label === "string" && payload.label
       ? payload.label.slice(0, DETAIL_LIMIT)
       : undefined;
-  const agent = typeof payload.agent === "string" ? payload.agent : undefined;
+  show(payload.state, detail);
+});
 
-  show(payload.state, detail, agent);
+root.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  showContextMenu(event);
 });
 
 root.addEventListener("pointerdown", (event) => {
   if (event.button === 0) {
+    hideContextMenu();
     void getCurrentWindow().startDragging();
   }
 });
 
-pet?.addEventListener("click", () => {
-  hint?.classList.add("visible");
-  window.setTimeout(() => hint?.classList.remove("visible"), 1200);
+closeButton?.addEventListener("click", () => {
+  void invoke("quit_app");
 });
