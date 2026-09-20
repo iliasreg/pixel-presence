@@ -5,6 +5,11 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
+  // Pre-bundle the API modules before the window loads. Optimized on first
+  // request instead, the page's imports 504 and the companion renders empty.
+  optimizeDeps: {
+    include: ["@tauri-apps/api/event", "@tauri-apps/api/window"],
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
