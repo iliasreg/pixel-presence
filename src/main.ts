@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles.css";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -25,6 +26,12 @@ root.innerHTML = `
 
 const pet = document.querySelector<HTMLButtonElement>(".pixel-pet");
 const hint = document.querySelector<HTMLParagraphElement>(".hint");
+
+root.addEventListener("pointerdown", (event) => {
+  if (event.button === 0) {
+    void getCurrentWindow().startDragging();
+  }
+});
 
 pet?.addEventListener("click", () => {
   hint?.classList.add("visible");
