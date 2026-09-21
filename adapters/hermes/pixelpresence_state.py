@@ -2,17 +2,35 @@
 """Translate a Hermes lifecycle hook payload into a PixelPresence state event.
 
 Hermes spawns this for each subscribed hook event and pipes the payload to
-stdin. The resolved state is written atomically to the file the companion
-watches. Exit status stays 0 so a failure here can never block a tool call.
+stdin. The resolved state is written atomically to this session's own file
+inside the directory the companion watches, which is what lets several agents
+drive one companion without overwriting each other. Exit status stays 0 so a
+failure here can never block a tool call.
 """
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_STATE_FILE = Path("/mnt/c/Users/ilias/.pixelpresence/state.json")
+WINDOWS_USERS = Path("/mnt/c/Users")
+
+
+def windows_profile() -> Path | None:
+    """Resolve the Windows profile from either side of the WSL boundary."""
+    if os.environ.get("USERPROFILE"):
+        return Path(os.environ["USERPROFILE"])
+    if os.name == "nt" or not WINDOWS_USERS.is_dir():
+        return None
+
+    with_state = [
+        profile
+        for profile in sorted(WINDOWS_USERS.iterdir())
+        if (profile / ".pixelpresence").is_dir()
+    ]
+    return with_state[0] if len(with_state) == 1 else None
 
 STATES = {"idle", "thinking", "working", "waiting", "success", "error"}
 
@@ -54,9 +72,28 @@ def resolve(payload: dict) -> tuple[str, str | None]:
     return (TURN_EVENTS.get(name, "thinking"), tool)
 
 
-def state_path() -> Path:
-    override = os.environ.get("PIXELPRESENCE_STATE_FILE")
-    return Path(override) if override else DEFAULT_STATE_FILE
+def state_dir() -> Path:
+    override = os.environ.get("PIXELPRESENCE_DIR")
+    if override:
+        return Path(override)
+    profile = windows_profile()
+    return (profile / ".pixelpresence") if profile else Path.home() / ".pixelpresence"
+
+
+def sessions_dir() -> Path:
+    return state_dir() / "sessions"
+
+
+def session_id(payload: dict) -> str:
+    """A filename-safe id for the writing session.
+
+    One file per session is the whole point: two agents running at once would
+    otherwise overwrite a single shared state file and each would see the
+    other's state.
+    """
+    raw = str(payload.get("session_id") or "unknown")
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", raw).strip("._") or "unknown"
+    return safe[:96]
 
 
 def trace(payload: dict, state: str, detail: str | None) -> None:
@@ -85,17 +122,11 @@ def trace(payload: dict, state: str, detail: str | None) -> None:
         pass
 
 
-def write(payload: dict) -> None:
-    state, detail = resolve(payload)
-    if state not in STATES:
-        return
-
-    trace(payload, state, detail)
-
-    event = {
+def build_event(payload: dict, state: str, detail: str | None) -> dict:
+    return {
         "version": 1,
         "type": "agent.state",
-        "agent": "hermes",
+        "agent": payload.get("agent") or "hermes",
         "state": state,
         "label": detail or None,
         "session_id": payload.get("session_id"),
@@ -103,11 +134,24 @@ def write(payload: dict) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
     }
 
-    target = state_path()
+
+def write_file_atomically(target: Path, event: dict) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     scratch = target.with_suffix(".tmp")
     scratch.write_text(json.dumps(event))
     os.replace(scratch, target)
+
+
+def write(payload: dict) -> None:
+    state, detail = resolve(payload)
+    if state not in STATES:
+        return
+
+    trace(payload, state, detail)
+    write_file_atomically(
+        sessions_dir() / f"{session_id(payload)}.json",
+        build_event(payload, state, detail),
+    )
 
 
 def selftest() -> None:
@@ -117,6 +161,8 @@ def selftest() -> None:
     assert resolve({"hook_event_name": "post_llm_call"}) == ("success", None)
     assert resolve({"hook_event_name": "pre_approval_request"}) == ("waiting", None)
     assert resolve({"hook_event_name": "on_session_end"}) == ("idle", None)
+    assert resolve({"hook_event_name": "subagent_start"}) == ("working", None)
+    assert resolve({"hook_event_name": "on_session_start"}) == ("idle", None)
     assert resolve({"hook_event_name": "post_tool_call", "tool_name": "patch"}) == (
         "working",
         "patch",
@@ -146,6 +192,28 @@ def selftest() -> None:
         {"hook_event_name": "post_llm_call", "extra": {"interrupted": True}}
     ) == ("idle", None)
     assert resolve({"hook_event_name": "unknown_event"}) == ("thinking", None)
+
+    # One session, one file — and an id that cannot escape the directory.
+    assert session_id({"session_id": "20260921_205319_8eee71"}) == "20260921_205319_8eee71"
+    assert session_id({}) == "unknown"
+    assert "/" not in session_id({"session_id": "../../etc/passwd"})
+
+    event = build_event(
+        {"session_id": "s1", "goal": "x"}, "working", "terminal"
+    )
+    assert event["state"] == "working" and event["version"] == 1
+    assert event["type"] == "agent.state" and event["agent"] == "hermes"
+    assert set(event) == {
+        "version",
+        "type",
+        "agent",
+        "state",
+        "label",
+        "session_id",
+        "profile",
+        "timestamp",
+    }, event
+
     print("selftest ok")
 
 
