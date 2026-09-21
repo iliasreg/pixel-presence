@@ -132,11 +132,11 @@ the tool can be pointed at another machine's companion.
 
 ## Hermes integration
 
-The hook is one script serving several events. Apply
+The hook is one script serving several events. From the repository root, apply
 `adapters/hermes/config-snippet.yaml` to `~/.hermes/config.yaml`:
 
 ```bash
-cmd=/mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+cmd="$(pwd)/adapters/hermes/pixelpresence_state.py"
 for ev in on_session_start pre_llm_call post_llm_call pre_tool_call \
           post_tool_call pre_approval_request subagent_start subagent_stop \
           on_session_end; do

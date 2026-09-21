@@ -15,7 +15,22 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_DIR = Path("/mnt/c/Users/ilias/.pixelpresence")
+WINDOWS_USERS = Path("/mnt/c/Users")
+
+
+def windows_profile() -> Path | None:
+    """Resolve the Windows profile from either side of the WSL boundary."""
+    if os.environ.get("USERPROFILE"):
+        return Path(os.environ["USERPROFILE"])
+    if os.name == "nt" or not WINDOWS_USERS.is_dir():
+        return None
+
+    with_state = [
+        profile
+        for profile in sorted(WINDOWS_USERS.iterdir())
+        if (profile / ".pixelpresence").is_dir()
+    ]
+    return with_state[0] if len(with_state) == 1 else None
 
 STATES = {"idle", "thinking", "working", "waiting", "success", "error"}
 
@@ -59,7 +74,10 @@ def resolve(payload: dict) -> tuple[str, str | None]:
 
 def state_dir() -> Path:
     override = os.environ.get("PIXELPRESENCE_DIR")
-    return Path(override) if override else DEFAULT_DIR
+    if override:
+        return Path(override)
+    profile = windows_profile()
+    return (profile / ".pixelpresence") if profile else Path.home() / ".pixelpresence"
 
 
 def sessions_dir() -> Path:
