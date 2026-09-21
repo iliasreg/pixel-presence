@@ -8,6 +8,9 @@
 # `timeout: 5` keeps a stuck script from stalling a tool call. The hook fails
 # open: a crash or timeout logs a warning and the agent continues.
 hooks:
+  on_session_start:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
   pre_llm_call:
     - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
       timeout: 5
@@ -21,6 +24,12 @@ hooks:
     - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
       timeout: 5
   pre_approval_request:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  subagent_start:
+    - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
+      timeout: 5
+  subagent_stop:
     - command: /mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
       timeout: 5
   on_session_end:
