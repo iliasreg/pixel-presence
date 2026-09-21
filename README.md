@@ -188,6 +188,30 @@ powershell.exe -NoProfile -Command '$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="
 reloads without a Rust rebuild. Window placement, the tray and the session
 watcher live in Rust; changing any of them needs a restart.
 
+## Install on Windows
+
+Use an installer built from a release, not `pixel-presence.exe` from a cargo
+target directory. The target directory is development output and can disappear
+on the next `cargo clean`.
+
+1. Download either installer from the release bundle:
+
+   - `PixelPresence_<version>_x64-setup.exe` — NSIS installer
+   - `PixelPresence_<version>_x64_en-US.msi` — Windows Installer package
+
+2. Open the downloaded file and complete the Windows installer. The NSIS
+   installer places the app in `%LOCALAPPDATA%\PixelPresence`; the MSI uses its
+   Windows-managed install location. Both add a Start Menu shortcut.
+3. Launch **PixelPresence** from the Start Menu. It needs no terminal or Vite
+   dev server; the frontend and shipped companion art are embedded in the app.
+4. To launch it automatically after signing in, right-click its tray icon and
+   select **Start with Windows**. Enable this only from the installed app, never
+   from a debug or cargo-target executable.
+
+The tray menu also provides **Show / Hide** and **Quit PixelPresence**. The
+keyboard shortcuts are `Ctrl+Shift+Space` to toggle visibility and
+`Ctrl+Shift+Q` to quit.
+
 ## Building an installer
 
 ```bash
@@ -200,10 +224,9 @@ dev server) plus MSI and NSIS installers under
 NSIS toolchains, and `lto = true` in `Cargo.toml` makes a release build slow —
 minutes, not seconds.
 
-Install it and the companion is a normal Windows app: no terminal, no dev
-server, and the tray's **Start with Windows** becomes meaningful. An installed
-build serves the shipped default art; the local art override described below
-only applies to builds made from a checkout that has `.env.local`.
+An installed build serves the shipped default art; the local art override
+described below only applies to builds made from a checkout that has
+`.env.local`.
 
 ## Verifying a state change
 
