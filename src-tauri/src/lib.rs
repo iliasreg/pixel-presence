@@ -1,16 +1,18 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use tauri::menu::{Menu, MenuItem};
+use serde_json::Value;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-/// How often the companion re-reads the state file the agent hook writes.
+/// How often the companion re-reads the sessions the agent hooks write.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// How often the pointer is tested against the character. A window that is
@@ -21,6 +23,19 @@ const HIT_TEST_INTERVAL: Duration = Duration::from_millis(60);
 /// How often a dragged position is committed to disk. Dragging emits a move
 /// event per frame, so the writes are batched instead of hitting the disk.
 const POSITION_FLUSH_INTERVAL: Duration = Duration::from_millis(1000);
+
+/// The only protocol version this build understands. An event written by a
+/// future version is ignored rather than misread.
+const PROTOCOL_VERSION: i64 = 1;
+
+/// A session that has stopped writing is ignored, so an agent that crashed
+/// mid-turn cannot leave the companion stuck on `working` forever.
+const DEFAULT_SESSION_TTL_SECONDS: u64 = 600;
+
+/// Which state wins when several sessions are live, most urgent first. Needs
+/// beats busy: a session waiting on the user must not be hidden by another
+/// session that is merely running.
+const STATE_PRIORITY: [&str; 6] = ["waiting", "error", "working", "success", "thinking", "idle"];
 
 /// Character geometry in CSS pixels, mirroring `.pixel-pet` in styles.css.
 /// Everything outside this box is transparent, so a click there belongs to
@@ -33,39 +48,142 @@ const PET_BOTTOM: f64 = 18.0;
 /// click-through window the item under the pointer would be unreachable.
 static FORCED_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
-fn state_file_override() -> Option<PathBuf> {
-    std::env::var_os("PIXELPRESENCE_STATE_FILE").map(PathBuf::from)
+fn state_dir_override() -> Option<PathBuf> {
+    std::env::var_os("PIXELPRESENCE_DIR").map(PathBuf::from)
 }
 
 fn home_dir() -> PathBuf {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
-        .expect("no home directory to resolve the companion state file")
+        .expect("no home directory to resolve the companion state directory")
 }
 
-/// Directory both sides use for companion state. Overriding the state file
-/// moves its siblings with it, so a redirected setup stays self-contained.
+/// Directory both sides use for companion state. One file per session lives
+/// inside it, so several agents can drive one companion.
 fn state_dir() -> PathBuf {
-    if let Some(parent) = state_file_override().and_then(|path| path.parent().map(PathBuf::from)) {
-        return parent;
-    }
-    home_dir().join(".pixelpresence")
+    state_dir_override().unwrap_or_else(|| home_dir().join(".pixelpresence"))
 }
 
-fn state_file() -> PathBuf {
-    state_file_override().unwrap_or_else(|| state_dir().join("state.json"))
+fn sessions_dir() -> PathBuf {
+    state_dir().join("sessions")
 }
 
-/// Where the dragged window position is remembered. Separate from the state
-/// file, which the agent hook rewrites on every event.
+/// Where the dragged window position is remembered. Separate from the session
+/// files, which the agent hook rewrites on every event.
 fn window_state_file() -> PathBuf {
     state_dir().join("window.json")
 }
 
+fn session_ttl_seconds() -> u64 {
+    std::env::var("PIXELPRESENCE_SESSION_TTL_SECONDS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(DEFAULT_SESSION_TTL_SECONDS)
+}
+
+fn state_rank(state: &str) -> Option<usize> {
+    STATE_PRIORITY
+        .iter()
+        .position(|candidate| *candidate == state)
+}
+
+/// One session's last reported state, with the rank that decides whether it
+/// outranks another session's.
+#[derive(Debug, Clone, PartialEq)]
+struct Candidate {
+    value: Value,
+    rank: usize,
+}
+
+/// Parse and validate a session file. Returns `None` for anything this build
+/// should not act on: an unknown protocol version, a malformed body, or a
+/// state outside the protocol.
+fn parse_candidate(text: &str) -> Option<Candidate> {
+    let value: Value = serde_json::from_str(text).ok()?;
+
+    if value.get("version").and_then(Value::as_i64) != Some(PROTOCOL_VERSION) {
+        return None;
+    }
+
+    let state = value.get("state").and_then(Value::as_str)?;
+    let rank = state_rank(state)?;
+
+    Some(Candidate { value, rank })
+}
+
+fn reported_at(candidate: &Candidate) -> &str {
+    candidate
+        .value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+/// The session the companion should be reflecting.
+///
+/// Urgency first, then the most recent report within the same urgency, so the
+/// choice is stable and explainable rather than dependent on read order.
+fn pick(candidates: Vec<Candidate>) -> Option<Candidate> {
+    candidates.into_iter().min_by(|a, b| {
+        a.rank
+            .cmp(&b.rank)
+            .then_with(|| reported_at(b).cmp(reported_at(a)))
+    })
+}
+
+fn load_candidates(directory: &Path, ttl_seconds: u64) -> Vec<Candidate> {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+
+    let now = SystemTime::now();
+    let mut candidates = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+
+        let age = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .map(|age| age.as_secs())
+            .unwrap_or(u64::MAX);
+        if age > ttl_seconds {
+            continue;
+        }
+
+        if let Ok(text) = fs::read_to_string(&path) {
+            if let Some(candidate) = parse_candidate(&text) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    candidates
+}
+
+/// What to show when nothing is live. Deliberately timestamp-free so the
+/// payload is byte-stable and only reaches the frontend once.
+fn resting_event() -> Value {
+    serde_json::json!({
+        "version": PROTOCOL_VERSION,
+        "type": "agent.state",
+        "agent": "pixelpresence",
+        "state": "idle",
+        "label": null,
+        "session_id": null,
+        "profile": null,
+    })
+}
+
 fn load_remembered_position() -> Option<PhysicalPosition<i32>> {
     let text = fs::read_to_string(window_state_file()).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
     Some(PhysicalPosition::new(
         value.get("x")?.as_i64()? as i32,
         value.get("y")?.as_i64()? as i32,
@@ -219,9 +337,28 @@ fn toggle_companion(app: &AppHandle) {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit PixelPresence", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&toggle, &quit])?;
+    // A debug build runs the binary out of the cargo target directory and needs
+    // the Vite dev server to render, so registering it to start at login would
+    // put a blank window on screen at every boot.
+    let installed_build = !cfg!(debug_assertions);
+    let autostart_label = if installed_build {
+        "Start with Windows"
+    } else {
+        "Start with Windows (installed builds only)"
+    };
+    let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
+
+    let toggle_item = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        autostart_label,
+        installed_build,
+        autostart_on,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit PixelPresence", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&toggle_item, &autostart_item, &quit_item])?;
 
     let mut builder = TrayIconBuilder::with_id("pixelpresence")
         .menu(&menu)
@@ -232,9 +369,32 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         builder = builder.icon(icon);
     }
 
+    let autostart_for_handler = autostart_item.clone();
+
     builder
-        .on_menu_event(|app, event| match event.id().as_ref() {
+        .on_menu_event(move |app, event| match event.id().as_ref() {
             "toggle" => toggle_companion(app),
+            "autostart" => {
+                // The registry is the source of truth, not the tick, so a
+                // failure to write it cannot leave the menu lying.
+                let manager = app.autolaunch();
+                let enabled = manager.is_enabled().unwrap_or(false);
+                let outcome = if enabled {
+                    manager.disable()
+                } else {
+                    manager.enable()
+                };
+
+                match outcome {
+                    Ok(()) => {
+                        let now = manager.is_enabled().unwrap_or(!enabled);
+                        let _ = autostart_for_handler.set_checked(now);
+                    }
+                    Err(error) => {
+                        eprintln!("pixelpresence: could not change autostart: {error}");
+                    }
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -253,27 +413,29 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Watch the agent state file and forward each new event to the frontend.
+/// Watch the session files and forward whatever the companion should show.
 ///
-/// The file is the transport: Hermes runs in WSL and cannot reach a Windows
-/// loopback listener, while both sides can read this path.
-fn watch_state_file(window: WebviewWindow) {
+/// The files are the transport: Hermes runs in WSL and cannot reach a Windows
+/// loopback listener, while both sides can read this directory. One file per
+/// session is what lets several agents report at once instead of overwriting a
+/// single shared state file.
+fn watch_sessions(window: WebviewWindow) {
     thread::spawn(move || {
-        let path = state_file();
+        let directory = sessions_dir();
+        let ttl_seconds = session_ttl_seconds();
         let mut delivered = String::new();
 
         loop {
-            if let Ok(text) = fs::read_to_string(&path) {
-                if text != delivered {
-                    match serde_json::from_str::<serde_json::Value>(&text) {
-                        Ok(event) => {
-                            let _ = window.emit("companion://state", event);
-                        }
-                        Err(_) => {}
-                    }
-                    // An unparseable payload is only retried once it changes.
-                    delivered = text;
-                }
+            let payload = pick(load_candidates(&directory, ttl_seconds))
+                .map(|candidate| candidate.value)
+                .unwrap_or_else(resting_event);
+
+            // Only forward a change of what the companion would show, so a
+            // second session reporting the same state is not a repaint.
+            let text = payload.to_string();
+            if text != delivered {
+                let _ = window.emit("companion://state", payload);
+                delivered = text;
             }
 
             thread::sleep(POLL_INTERVAL);
@@ -301,6 +463,10 @@ pub fn run() {
     let handler_quit = quit_shortcut.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -326,9 +492,97 @@ pub fn run() {
             watch_pointer(window.clone());
             app.global_shortcut().register(toggle_shortcut.clone())?;
             app.global_shortcut().register(quit_shortcut.clone())?;
-            watch_state_file(window);
+            watch_sessions(window);
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running PixelPresence");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(state: &str, timestamp: &str) -> Candidate {
+        let value = serde_json::json!({
+            "version": PROTOCOL_VERSION,
+            "type": "agent.state",
+            "agent": "test",
+            "state": state,
+            "label": null,
+            "session_id": state,
+            "timestamp": timestamp,
+        });
+        parse_candidate(&value.to_string()).expect("fixture should parse")
+    }
+
+    #[test]
+    fn needs_the_user_outranks_merely_busy() {
+        let picked = pick(vec![
+            candidate("working", "2026-09-21T10:00:05+00:00"),
+            candidate("waiting", "2026-09-21T10:00:01+00:00"),
+        ])
+        .expect("a winner");
+
+        assert_eq!(picked.value["state"], "waiting");
+    }
+
+    #[test]
+    fn urgency_order_is_the_documented_one() {
+        let mut states = STATE_PRIORITY.to_vec();
+        let mut picked = Vec::new();
+        while !states.is_empty() {
+            let champ = pick(
+                states
+                    .iter()
+                    .map(|state| candidate(state, "2026-09-21T10:00:00+00:00"))
+                    .collect(),
+            )
+            .expect("a winner");
+            let name = champ.value["state"].as_str().unwrap().to_string();
+            picked.push(name.clone());
+            states.retain(|state| *state != name);
+        }
+
+        assert_eq!(picked, STATE_PRIORITY.to_vec());
+    }
+
+    #[test]
+    fn most_recent_report_wins_within_a_rank() {
+        let picked = pick(vec![
+            candidate("working", "2026-09-21T10:00:01+00:00"),
+            candidate("working", "2026-09-21T10:00:09+00:00"),
+        ])
+        .expect("a winner");
+
+        assert_eq!(reported_at(&picked), "2026-09-21T10:00:09+00:00");
+    }
+
+    #[test]
+    fn an_unknown_state_is_refused() {
+        assert!(parse_candidate(r#"{"version":1,"state":"pondering"}"#).is_none());
+    }
+
+    #[test]
+    fn a_future_protocol_version_is_refused() {
+        assert!(parse_candidate(r#"{"version":2,"state":"working"}"#).is_none());
+    }
+
+    #[test]
+    fn malformed_bodies_and_missing_versions_are_refused() {
+        assert!(parse_candidate("not json").is_none());
+        assert!(parse_candidate(r#"{"state":"working"}"#).is_none());
+    }
+
+    #[test]
+    fn no_sessions_rests() {
+        assert!(pick(Vec::new()).is_none());
+        assert_eq!(resting_event()["state"], "idle");
+    }
+
+    #[test]
+    fn the_resting_event_is_byte_stable() {
+        // A timestamp here would make every poll look like a change.
+        assert_eq!(resting_event().to_string(), resting_event().to_string());
+    }
 }
