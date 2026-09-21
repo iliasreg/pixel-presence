@@ -55,9 +55,13 @@ SUCCESS_HOLD_MS = 5000  # `success` settles back to `idle` after this long
 DETAIL_LIMIT = 22
 SCREEN_INSET = 24
 
-BACKGROUND = "#f4f1ea"  # opaque window colour; the character reads best on it
+BACKGROUND = "#f4f1ea"  # caption card, and the window when transparency is unavailable
 INK = "#1c1c1c"
 CAPTION_FONT = ("Segoe UI", 10)
+
+# The window colour that Windows hides (see `blank`). Deliberately a value the
+# art does not contain, so no sprite pixel is punched out with it.
+KEY = "#0a0b0c"
 
 # ---------------------------------------------------------------------------
 # The protocol. The hook and the CLI write these; this order is the contract.
@@ -219,16 +223,29 @@ class Companion:
         self.root = tk.Tk()
         self.root.title("PixelPresence")
         self.root.resizable(False, False)
-        self.root.configure(bg=BACKGROUND)
         self.root.attributes("-topmost", True)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        # No title bar and no border: the sprite is the window.
+        self.root.overrideredirect(True)
 
+        # On Windows one attribute makes a single colour see-through, so the
+        # sprite floats on the desktop instead of sitting in a box. Anywhere
+        # else the window keeps an opaque background.
+        self.transparent = False
+        try:
+            self.root.attributes("-transparentcolor", KEY)
+        except tk.TclError:
+            pass
+        else:
+            self.transparent = True
+
+        self.root.configure(bg=self.blank)
         frame = layout["frame"]
         self.caption = tk.Label(
-            self.root, text="", bg=BACKGROUND, fg=INK, font=CAPTION_FONT, pady=4
+            self.root, text="", bg=self.blank, fg=INK, font=CAPTION_FONT, pady=4
         )
         self.canvas = tk.Canvas(
-            self.root, width=frame, height=frame, bg=BACKGROUND, highlightthickness=0
+            self.root, width=frame, height=frame, bg=self.blank, highlightthickness=0
         )
         self.caption.pack(fill="x")
         self.canvas.pack()
@@ -243,8 +260,17 @@ class Companion:
         self.sprite = self.canvas.create_image(0, 0, anchor="nw", image=self.sheet)
 
         self.place()
-        self.canvas.bind("<ButtonPress-1>", self.start_drag)
-        self.canvas.bind("<B1-Motion>", self.drag)
+        for widget in (self.canvas, self.caption):
+            widget.bind("<ButtonPress-1>", self.start_drag)
+            widget.bind("<B1-Motion>", self.drag)
+            # A borderless window has no close button, so quitting needs a
+            # gesture of its own.
+            widget.bind("<ButtonPress-3>", lambda _event: self.close())
+
+    @property
+    def blank(self) -> str:
+        """The colour that disappears, or the plain background without it."""
+        return KEY if self.transparent else BACKGROUND
 
     # -- placement ---------------------------------------------------------
 
@@ -304,8 +330,10 @@ class Companion:
             self.frame = 0
             self.success_since = time.monotonic() if state == "success" else None
 
-        text = caption_for(event)
-        self.caption.configure(text=text if self.state in TEXT_STATES else "")
+        # An empty caption keeps its space in the layout but must not paint a
+        # card, or a stray bar floats above the sprite.
+        text = caption_for(event) if self.state in TEXT_STATES else ""
+        self.caption.configure(text=text, bg=BACKGROUND if text else self.blank)
 
         row = self.layout["rows"].get(self.state, 0)
         column = self.frame % self.layout["frames"]
