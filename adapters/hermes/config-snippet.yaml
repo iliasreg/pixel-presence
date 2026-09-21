@@ -27,6 +27,10 @@ hooks:
   pre_approval_request:
     - command: <pixelpresence-dir>/adapters/hermes/pixelpresence_state.py
       timeout: 5
+  # Without this one an answered approval leaves the companion on `waiting`.
+  post_approval_response:
+    - command: <pixelpresence-dir>/adapters/hermes/pixelpresence_state.py
+      timeout: 5
   subagent_start:
     - command: <pixelpresence-dir>/adapters/hermes/pixelpresence_state.py
       timeout: 5
