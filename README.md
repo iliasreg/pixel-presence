@@ -44,10 +44,22 @@ launch the companion automatically with your agent.
 python3 companion/pixel_presence.py
 ```
 
-The window is ordinary and opaque on purpose: a normal decorated window that
-sits on top. Drag it by the character or the title bar; the position is
-remembered in `~/.pixelpresence/window.json` and restored next time. Close it
-with the window button or `Ctrl+C` in the terminal.
+There is no window frame: what you see is the character and, when a state has
+something to say, its caption. Drag it anywhere by the character or the caption;
+the position is remembered in `~/.pixelpresence/window.json` the moment you let
+go, and restored next time. A remembered position that no longer lands on a
+screen falls back to the bottom-right corner.
+
+| | |
+|---|---|
+| `Ctrl+Shift+Space` | show or hide the companion |
+| `Ctrl+Shift+Q` | quit |
+| right-click | quit |
+
+The shortcuts are system-wide, so they work whatever you are doing. They use
+`RegisterHotKey`, which asks the OS for those two combinations and watches
+nothing else — on other platforms the shortcuts are simply absent. Without them,
+quit with `Ctrl+C` in the terminal.
 
 ## States
 
@@ -62,7 +74,9 @@ with the window button or `Ctrl+C` in the terminal.
 
 `idle` and `thinking` carry no caption — they are legible from the character
 alone, so the companion reads as just the character most of the time. `success`
-settles back to `idle` after five seconds.
+settles back to `idle` after five seconds, and `waiting` clears as soon as you
+answer the approval, which is why the adapter registers
+`post_approval_response` as well as `pre_approval_request`.
 
 ## The protocol
 
@@ -127,8 +141,8 @@ must never block a tool call. `--session` names the slot and defaults to `cli`.
 ```bash
 cmd="$(pwd)/adapters/hermes/pixelpresence_state.py"
 for ev in on_session_start pre_llm_call post_llm_call pre_tool_call \
-          post_tool_call pre_approval_request subagent_start subagent_stop \
-          on_session_end; do
+          post_tool_call pre_approval_request post_approval_response \
+          subagent_start subagent_stop on_session_end; do
   hermes config set "hooks.$ev" "[{\"command\":\"$cmd\",\"timeout\":5}]" --force
 done
 ```
@@ -183,15 +197,15 @@ machine.
 
 So the behaviour is gone rather than hidden. Nothing is installed, nothing is
 registered for login, and there is no binary to sign. In exchange, these are
-also gone, each because it needs either a third-party dependency or the
-transparency and window-hooking APIs that made the app look like malware:
+gone, each because it needs either a third-party dependency or the window-hooking
+APIs that made the app look like malware:
 
-- **transparency** — the window is opaque
 - **click-through** — the window takes clicks in its own area
-- **tray icon** — no tray; use the window controls
-- **global hotkeys** — no keyboard hook; start it from a shell
+- **tray icon** — no tray; use the shortcuts or right-click
 
-Adding any of them back means adding that risk back.
+The transparency is one Windows attribute (`-transparentcolor`) rather than a
+layered window, and the shortcuts use `RegisterHotKey` rather than a keyboard
+hook. Neither watches your input or hides the process.
 
 ## Layout
 

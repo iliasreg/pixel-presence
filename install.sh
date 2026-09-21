@@ -15,7 +15,7 @@ set -eu
 REPO_DIR=$(cd "$(dirname "$0")" && pwd)
 COMPANION="$REPO_DIR/companion/pixel_presence.py"
 HOOK="$REPO_DIR/adapters/hermes/pixelpresence_state.py"
-EVENTS="on_session_start pre_llm_call post_llm_call pre_tool_call post_tool_call pre_approval_request subagent_start subagent_stop on_session_end"
+EVENTS="on_session_start pre_llm_call post_llm_call pre_tool_call post_tool_call pre_approval_request post_approval_response subagent_start subagent_stop on_session_end"
 
 say() { printf '%s\n' "$*"; }
 

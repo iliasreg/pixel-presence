@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
@@ -208,6 +210,59 @@ def remember_position(x: int, y: int) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Global shortcuts. Windows only, and not a keyboard hook: RegisterHotKey is
+# the system's own way to claim a combination, so it watches no other input.
+# ---------------------------------------------------------------------------
+
+TOGGLE_KEYS = "Ctrl+Shift+Space"
+QUIT_KEYS = "Ctrl+Shift+Q"
+
+HOTKEY_TOGGLE = 1
+HOTKEY_QUIT = 2
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+WM_HOTKEY = 0x0312
+VK_SPACE = 0x20
+VK_Q = 0x51
+
+
+def start_hotkeys(events: "queue.Queue[int]") -> bool:
+    """Claim the shortcuts, reporting whether they were actually registered.
+
+    The worker thread owns its own message queue, so Tk's message pump is never
+    touched -- draining the main thread's queue would eat Tk's own messages.
+    """
+    if sys.platform != "win32":
+        return False
+
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    ready = threading.Event()
+
+    def pump() -> None:
+        if not user32.RegisterHotKey(None, HOTKEY_TOGGLE, MOD_CONTROL | MOD_SHIFT, VK_SPACE):
+            return
+        if not user32.RegisterHotKey(None, HOTKEY_QUIT, MOD_CONTROL | MOD_SHIFT, VK_Q):
+            user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
+            return
+
+        ready.set()
+        message = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+            if message.message == WM_HOTKEY:
+                events.put(int(message.wParam))
+        user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
+        user32.UnregisterHotKey(None, HOTKEY_QUIT)
+
+    threading.Thread(target=pump, daemon=True).start()
+    # Another program may already own the combination, so wait for the verdict
+    # rather than claiming success.
+    return ready.wait(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
 # The companion
 # ---------------------------------------------------------------------------
 
@@ -263,9 +318,23 @@ class Companion:
         for widget in (self.canvas, self.caption):
             widget.bind("<ButtonPress-1>", self.start_drag)
             widget.bind("<B1-Motion>", self.drag)
+            # Remember where it was put, the moment the drag ends.
+            widget.bind("<ButtonRelease-1>", lambda _event: self.save_position())
             # A borderless window has no close button, so quitting needs a
             # gesture of its own.
             widget.bind("<ButtonPress-3>", lambda _event: self.close())
+
+        self.hidden = False
+        self.hotkeys: queue.Queue[int] = queue.Queue()
+        self.hotkeys_ok = start_hotkeys(self.hotkeys)
+
+    def toggle(self) -> None:
+        self.hidden = not self.hidden
+        if self.hidden:
+            self.root.withdraw()
+        else:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
 
     @property
     def blank(self) -> str:
@@ -310,13 +379,24 @@ class Companion:
         dx, dy = self.drag_origin
         self.root.geometry(f"+{event.x_root - dx}+{event.y_root - dy}")
 
-    def close(self) -> None:
+    def save_position(self) -> None:
         remember_position(self.root.winfo_x(), self.root.winfo_y())
+
+    def close(self) -> None:
+        self.save_position()
         self.root.destroy()
 
     # -- rendering ---------------------------------------------------------
 
     def render(self) -> None:
+        while not self.hotkeys.empty():
+            key = self.hotkeys.get_nowait()
+            if key == HOTKEY_TOGGLE:
+                self.toggle()
+            elif key == HOTKEY_QUIT:
+                self.close()
+                return
+
         if self.state == "success" and self.success_since is not None:
             if time.monotonic() - self.success_since > SUCCESS_HOLD_MS / 1000:
                 self.state = "idle"
