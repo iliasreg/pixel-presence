@@ -1,22 +1,15 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
-
-node_modules
-dist
-dist-ssr
-*.local
-
-# Python (the hook and the CLI)
+# Python
 __pycache__/
 *.py[cod]
+.venv/
+venv/
 
-# Editor directories and files
+# Local sprite art. assets/enso-wisp-strip.png is the sheet that ships; a
+# personal sheet stays on the machine that made it, e.g.
+# assets/uei-companion-atlas.local.png
+assets/*.local.*
+
+# Editor and OS
 .vscode/
 .idea
 .DS_Store
