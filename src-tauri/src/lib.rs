@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -336,11 +337,26 @@ fn toggle_companion(app: &AppHandle) {
     }
 }
 
+fn running_from_cargo_profile(executable: &Path, cargo_profile: &Path) -> bool {
+    executable.parent() == Some(cargo_profile)
+}
+
+fn installed_build() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+
+    let cargo_profile = Path::new(env!("PIXELPRESENCE_CARGO_PROFILE_DIR"));
+    env::current_exe()
+        .ok()
+        .is_some_and(|executable| !running_from_cargo_profile(&executable, cargo_profile))
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    // A debug build runs the binary out of the cargo target directory and needs
-    // the Vite dev server to render, so registering it to start at login would
-    // put a blank window on screen at every boot.
-    let installed_build = !cfg!(debug_assertions);
+    // Cargo binaries live directly in their debug/release profile directory.
+    // An installed bundle copies the executable elsewhere; only that copy can
+    // register a durable login entry.
+    let installed_build = installed_build();
     let autostart_label = if installed_build {
         "Start with Windows"
     } else {
@@ -578,6 +594,21 @@ mod tests {
     fn no_sessions_rests() {
         assert!(pick(Vec::new()).is_none());
         assert_eq!(resting_event()["state"], "idle");
+    }
+
+    #[test]
+    fn cargo_profile_executable_is_not_an_installed_build() {
+        let profile = Path::new("C:/build/cargo-target/release");
+        let executable = profile.join("pixel-presence.exe");
+        assert!(running_from_cargo_profile(&executable, profile));
+    }
+
+    #[test]
+    fn installed_executable_is_not_mistaken_for_cargo_output() {
+        let profile = Path::new("C:/build/cargo-target/release");
+        let executable =
+            Path::new("C:/Users/example/AppData/Local/PixelPresence/pixel-presence.exe");
+        assert!(!running_from_cargo_profile(executable, profile));
     }
 
     #[test]

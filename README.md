@@ -272,8 +272,3 @@ src-tauri/src/lib.rs      tray, remembered position, click-through hit test,
                           session aggregation, state file watcher
 src-tauri/capabilities/   window permissions (start-dragging is not in the default set)
 ```
-
-## Project direction
-
-The implementation plan lives in Obsidian at
-`/mnt/z/alternance/notes/PixelPresence/PixelPresence.md`.
