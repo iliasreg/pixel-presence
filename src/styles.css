@@ -42,37 +42,34 @@ button {
   cursor: grabbing;
 }
 
+/* Ink caption: the art is line work on paper, so the caption is a hairline rule
+   on off-white rather than a comic bubble. It stays hidden unless the companion
+   actually has something to report — see TEXT_STATES in main.ts. */
 .dialogue-box {
   position: absolute;
-  top: 62px;
-  right: 18px;
-  left: 18px;
+  top: 32px;
+  right: 0;
+  left: 0;
+  width: fit-content;
+  max-width: calc(100% - 36px);
+  margin: 0 auto;
   display: flex;
   align-items: center;
-  min-height: 38px;
-  padding: 9px 12px;
-  border: 2px solid #080d12;
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 4px 4px 0 rgba(8, 13, 18, 0.72);
-  color: #080d12;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  backdrop-filter: blur(2px);
+  justify-content: center;
+  min-height: 24px;
+  padding: 4px 11px;
+  border: 1px solid #111111;
+  border-radius: 2px;
+  background: rgba(252, 251, 249, 0.95);
+  color: #111111;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-align: center;
+  backdrop-filter: blur(3px);
 }
 
-.dialogue-box::after {
-  position: absolute;
-  bottom: -7px;
-  left: 34px;
-  width: 10px;
-  height: 10px;
-  border-right: 2px solid #080d12;
-  border-bottom: 2px solid #080d12;
-  background: #ffffff;
-  content: "";
-  transform: rotate(45deg);
+.dialogue-box[hidden] {
+  display: none;
 }
 
 .dialogue-text {
@@ -125,7 +122,7 @@ button {
   background: transparent;
   cursor: pointer;
   image-rendering: pixelated;
-  opacity: 0.88;
+  opacity: 1;
 }
 
 .pixel-pet:hover {
@@ -149,10 +146,10 @@ button {
   --frame: 0;
   position: absolute;
   inset: 0;
-  background-image: url("./assets/enso-wisp-strip.png");
+  background-image: var(--pet-art-image, url("./assets/enso-wisp-strip.png"));
   background-repeat: no-repeat;
-  background-position: calc(var(--frame) * -216px) 0;
-  background-size: 1272px 192px;
+  background-position: calc(var(--frame) * var(--pet-art-step, -216px)) calc(var(--pet-art-row, 0) * -192px);
+  background-size: var(--pet-art-size, 1272px 192px);
 }
 
 .pixel-pet[data-state="idle"] .pet-art { --frame: 0; }
@@ -161,6 +158,75 @@ button {
 .pixel-pet[data-state="waiting"] .pet-art { --frame: 3; }
 .pixel-pet[data-state="success"] .pet-art { --frame: 4; }
 .pixel-pet[data-state="error"] .pet-art { --frame: 5; }
+
+/* Local UEI atlas: six state rows, eight animation frames each. */
+:root[data-pet-art="uei"] .pixel-pet .pet-art {
+  --frame: 0;
+  animation-fill-mode: both;
+}
+
+:root[data-pet-art="uei"] .pixel-pet[data-state="idle"] .pet-art { --pet-art-row: 0; }
+:root[data-pet-art="uei"] .pixel-pet[data-state="thinking"] .pet-art { --pet-art-row: 1; }
+:root[data-pet-art="uei"] .pixel-pet[data-state="working"] .pet-art { --pet-art-row: 2; }
+:root[data-pet-art="uei"] .pixel-pet[data-state="waiting"] .pet-art { --pet-art-row: 3; }
+:root[data-pet-art="uei"] .pixel-pet[data-state="success"] .pet-art { --pet-art-row: 4; }
+:root[data-pet-art="uei"] .pixel-pet[data-state="error"] .pet-art { --pet-art-row: 5; }
+
+@keyframes uei-idle-frames {
+  from { background-position: 0 0; }
+  to { background-position: -1536px 0; }
+}
+
+@keyframes uei-thinking-frames {
+  from { background-position: 0 -192px; }
+  to { background-position: -1536px -192px; }
+}
+
+@keyframes uei-working-frames {
+  from { background-position: 0 -384px; }
+  to { background-position: -1536px -384px; }
+}
+
+@keyframes uei-waiting-frames {
+  from { background-position: 0 -576px; }
+  to { background-position: -1536px -576px; }
+}
+
+@keyframes uei-success-frames {
+  from { background-position: 0 -768px; }
+  to { background-position: -1536px -768px; }
+}
+
+@keyframes uei-error-frames {
+  from { background-position: 0 -960px; }
+  to { background-position: -1536px -960px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-pet-art="uei"] .pixel-pet[data-state="idle"] .pet-art {
+    animation: uei-idle-frames 3.2s steps(8, end) infinite;
+  }
+
+  :root[data-pet-art="uei"] .pixel-pet[data-state="thinking"] .pet-art {
+    animation: uei-thinking-frames 2.4s steps(8, end) infinite;
+  }
+
+  :root[data-pet-art="uei"] .pixel-pet[data-state="working"] .pet-art {
+    animation: uei-working-frames 1.4s steps(8, end) infinite;
+  }
+
+  :root[data-pet-art="uei"] .pixel-pet[data-state="waiting"] .pet-art {
+    animation: uei-waiting-frames 2.0s steps(8, end) infinite;
+  }
+
+  :root[data-pet-art="uei"] .pixel-pet[data-state="success"] .pet-art {
+    animation: uei-success-frames 1.2s steps(8, end) 1;
+  }
+
+  :root[data-pet-art="uei"] .pixel-pet[data-state="error"] .pet-art {
+    animation: uei-error-frames 1.0s steps(8, end) 3;
+  }
+}
 
 @media (prefers-reduced-motion: no-preference) {
   .pixel-pet[data-state="idle"] {

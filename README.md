@@ -10,15 +10,34 @@ Current state: the companion reacts to real Hermes Agent activity.
 
 | State | Shown when | Detail line |
 |---|---|---|
-| `idle` | no turn running | |
+| `idle` | no turn running; a session starts or ends (`on_session_start` / `on_session_end`) | |
 | `thinking` | a turn starts (`pre_llm_call`) | |
-| `working` | a tool is running or just finished (`pre_tool_call` / `post_tool_call`) | tool name |
+| `working` | a tool is running or just finished (`pre_tool_call` / `post_tool_call`), or a subagent is running (`subagent_start` / `subagent_stop`) | tool name |
 | `waiting` | the agent needs the user (`pre_approval_request`) | |
 | `success` | the turn completed (`post_llm_call`) | |
 | `error` | a tool failed (`post_tool_call` with a non-ok status) | tool name |
 
 `success` decays to `idle` after five seconds. Every state has its own sprite
 frame and its own motion.
+
+The caption only appears for `working`, `waiting`, `success` and `error` —
+`idle` and `thinking` are legible from the character alone, so the companion
+reads as just the character the rest of the time.
+
+## Window behaviour
+
+- **Tray icon** with `Show / Hide` and `Quit PixelPresence`. Left-click the icon
+  to toggle the companion; right-click for the menu. `Ctrl+Shift+Space` toggles
+  and `Ctrl+Shift+Q` quits from anywhere.
+- **Position is remembered** in `%USERPROFILE%\.pixelpresence\window.json` and
+  restored on the next start; a position that no longer lands on a monitor
+  falls back to the bottom-right corner.
+- **Click-through.** Only the character is interactive. Everywhere else the
+  window is transparent and lets clicks fall through to whatever is behind it,
+  so the companion does not act as an invisible blocker. The pointer is polled
+  because a window that is ignoring cursor events cannot report arrivals; the
+  window is handed its input back whenever a menu is open, since a menu can
+  extend past the character.
 
 ## How the agent reaches the companion
 
@@ -57,8 +76,9 @@ The hook is one script serving several events. Apply
 
 ```bash
 cmd=/mnt/c/Users/ilias/Projects/pixel-presence/adapters/hermes/pixelpresence_state.py
-for ev in pre_llm_call post_llm_call pre_tool_call post_tool_call \
-          pre_approval_request on_session_end; do
+for ev in on_session_start pre_llm_call post_llm_call pre_tool_call \
+          post_tool_call pre_approval_request subagent_start subagent_stop \
+          on_session_end; do
   hermes config set "hooks.$ev" "[{\"command\":\"$cmd\",\"timeout\":5}]" --force
 done
 ```
@@ -130,7 +150,8 @@ adapters/hermes/          hook script + config snippet
 src/main.ts               state machine, sprite frame selection, drag
 src/styles.css            sprite strip mapping and per-state motion
 src/assets/               enso-wisp-strip.png (6 frames, 192px, 216px pitch)
-src-tauri/src/lib.rs      bottom-right placement + state file watcher
+src-tauri/src/lib.rs      bottom-right placement, remembered position, tray icon,
+                          click-through hit test, state file watcher
 src-tauri/capabilities/   window permissions (start-dragging is not in the default set)
 ```
 
