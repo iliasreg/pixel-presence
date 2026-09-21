@@ -52,6 +52,7 @@ def state_dir() -> Path:
 # Timing and appearance
 # ---------------------------------------------------------------------------
 
+HEARTBEAT_SECONDS = 5   # how often the companion says it is still alive
 FRAME_MS = 120          # animation and state-poll tick
 SUCCESS_HOLD_MS = 5000  # `success` settles back to `idle` after this long
 DETAIL_LIMIT = 22
@@ -113,8 +114,16 @@ DEFAULT_ART = REPO_ROOT / "assets" / "enso-wisp-strip.png"
 
 
 def art_choice() -> tuple[Path, dict]:
-    """Pick the sheet and its layout, preferring an explicit override."""
+    """Pick the sheet and its layout, preferring an explicit override.
+
+    A personal sheet kept in assets/ as `*.local.*` is used on its own, so
+    nobody has to set an environment variable to see their own art.
+    """
     override = os.environ.get("PIXELPRESENCE_ART")
+    if not override:
+        personal = sorted((REPO_ROOT / "assets").glob("*.local.*"))
+        if personal:
+            override = str(personal[0])
     if not override:
         return DEFAULT_ART, WISP_LAYOUT
     path = Path(override)
@@ -320,21 +329,51 @@ class Companion:
             widget.bind("<B1-Motion>", self.drag)
             # Remember where it was put, the moment the drag ends.
             widget.bind("<ButtonRelease-1>", lambda _event: self.save_position())
-            # A borderless window has no close button, so quitting needs a
-            # gesture of its own.
-            widget.bind("<ButtonPress-3>", lambda _event: self.close())
+            # A borderless window has no close button, so offer a menu instead.
+            widget.bind("<ButtonPress-3>", self.popup)
 
         self.hidden = False
         self.hotkeys: queue.Queue[int] = queue.Queue()
         self.hotkeys_ok = start_hotkeys(self.hotkeys)
+        self.last_beat = 0.0
+        self.write_heartbeat()
+        if not self.hotkeys_ok and sys.platform == "win32":
+            # Silently dead shortcuts are worse than none: say why.
+            print(
+                f"pixelpresence: {TOGGLE_KEYS} and {QUIT_KEYS} could not be claimed "
+                "(another program holds them); use right-click to quit",
+                file=sys.stderr,
+            )
+
+        self.menu = tk.Menu(self.root, tearoff=0)
+        self.menu.add_command(label="Hide", command=self.toggle)
+        self.menu.add_separator()
+        self.menu.add_command(label="Quit", command=self.close)
+
+    def popup(self, event: tk.Event) -> None:
+        try:
+            self.menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.menu.grab_release()
+
+    def reapply(self) -> None:
+        """Restore what Tk drops when a borderless window is re-mapped.
+
+        Without this, showing the window again after hiding it loses the
+        see-through background.
+        """
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        if self.transparent:
+            self.root.attributes("-transparentcolor", KEY)
 
     def toggle(self) -> None:
         self.hidden = not self.hidden
         if self.hidden:
             self.root.withdraw()
-        else:
-            self.root.deiconify()
-            self.root.attributes("-topmost", True)
+            return
+        self.root.deiconify()
+        self.reapply()
 
     @property
     def blank(self) -> str:
@@ -382,6 +421,15 @@ class Companion:
     def save_position(self) -> None:
         remember_position(self.root.winfo_x(), self.root.winfo_y())
 
+    def write_heartbeat(self) -> None:
+        """Say we are alive, so a launcher does not start a second companion."""
+        try:
+            path = state_dir() / "companion.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
+        except OSError:
+            pass
+
     def close(self) -> None:
         self.save_position()
         self.root.destroy()
@@ -402,6 +450,11 @@ class Companion:
                 self.state = "idle"
                 self.frame = 0
                 self.success_since = None
+
+        now = time.monotonic()
+        if now - self.last_beat > HEARTBEAT_SECONDS:
+            self.last_beat = now
+            self.write_heartbeat()
 
         event = winning_session()
         state = event["state"] if event else "idle"

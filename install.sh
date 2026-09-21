@@ -49,20 +49,18 @@ say ""
 # The one question
 # ---------------------------------------------------------------------------
 
-say "Launch the companion automatically whenever your agent runs?"
+say "Launch the companion with your agent?"
 say ""
-say "  yes  every agent session starts it, and it exits with the session"
-say "  no   you start it yourself: python3 companion/pixel_presence.py"
+say "  yes (default)  starting an agent session starts the companion too"
+say "  no             you start it yourself, whenever you want it"
 say ""
-printf 'Launch with the agent? [y/N] '
-# Reading stdin covers both cases: interactive use has the terminal on stdin,
-# and a piped answer arrives the same way. No /dev/tty juggling required.
+printf 'Launch with the agent? [Y/n] '
 answer=""
 read -r answer || answer=""
 
 case "$answer" in
-[yY]*) WITH_AGENT=yes ;;
-*)     WITH_AGENT=no ;;
+[nN]*) WITH_AGENT=no ;;
+*)     WITH_AGENT=yes ;;
 esac
 
 if [ "$WITH_AGENT" = "yes" ]; then
@@ -90,9 +88,11 @@ if [ "$WITH_AGENT" = "yes" ]; then
     say "    HERMES_ACCEPT_HOOKS=1 hermes chat -q hi"
     say "    hermes hooks doctor"
     say ""
-    say "A new agent session is needed for the hooks to take effect."
-    say "Start the companion for this session with:"
-    say "    python3 companion/pixel_presence.py"
+    say "A new agent session is needed for the hooks to take effect. From then on"
+    say "the companion starts with every session, and it is started now if it is"
+    say "not already running."
+    say ""
+    say "To start it by hand:  python3 $COMPANION"
 else
     say ""
     say "Nothing else to do. Start the companion whenever you want it:"

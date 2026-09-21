@@ -10,8 +10,11 @@ failure here can never block a tool call.
 
 import json
 import os
+import platform
 import re
+import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -153,6 +156,90 @@ def write(payload: dict) -> None:
         build_event(payload, state, detail),
     )
 
+    if payload.get("hook_event_name") == "on_session_start":
+        launch_companion()
+
+
+# ---------------------------------------------------------------------------
+# Starting the companion. Only `on_session_start` does this, and every failure
+# is swallowed: a hook must never disturb the agent.
+# ---------------------------------------------------------------------------
+
+STALE_AFTER = 30  # seconds; the companion refreshes its heartbeat every 5
+
+
+def companion_running() -> bool:
+    """True while a companion is alive, judged by its heartbeat file."""
+    try:
+        beat = (state_dir() / "companion.json").stat()
+    except OSError:
+        return False
+    return (time.time() - beat.st_mtime) < STALE_AFTER
+
+
+def on_wsl() -> bool:
+    return "microsoft" in platform.uname().release.lower()
+
+
+def launch_companion() -> None:
+    """Start the companion detached, unless one is already running."""
+    if companion_running():
+        return
+
+    # adapters/hermes/<this file> -> the repository root.
+    repo = Path(__file__).resolve().parents[2]
+    entry = repo / "companion" / "pixel_presence.py"
+    if not entry.is_file():
+        return
+
+    try:
+        if on_wsl():
+            launch_on_windows(entry)
+        else:
+            subprocess.Popen(
+                [sys.executable, str(entry)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+    except OSError:
+        pass
+
+
+def launch_on_windows(entry: Path) -> None:
+    """Hand off to the Windows side, because WSL cannot draw a window.
+
+    The launcher picks a Windows python that actually has tkinter and starts the
+    companion detached from this hook.
+    """
+    launcher = entry.parent / "launch.ps1"
+    if not launcher.is_file():
+        return
+
+    converted = subprocess.run(
+        ["wslpath", "-w", str(launcher)],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if converted.returncode != 0:
+        return
+
+    subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            converted.stdout.strip(),
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        timeout=20,
+    )
+
 
 def selftest() -> None:
     tool = {"hook_event_name": "pre_tool_call", "tool_name": "terminal"}
@@ -192,6 +279,9 @@ def selftest() -> None:
         {"hook_event_name": "post_llm_call", "extra": {"interrupted": True}}
     ) == ("idle", None)
     assert resolve({"hook_event_name": "unknown_event"}) == ("thinking", None)
+
+    # Whether to start a companion is judged by its heartbeat file.
+    assert isinstance(companion_running(), bool)
 
     # One session, one file — and an id that cannot escape the directory.
     assert session_id({"session_id": "20260921_205319_8eee71"}) == "20260921_205319_8eee71"
