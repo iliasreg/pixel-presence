@@ -23,6 +23,24 @@ import tkinter as tk
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+_INSTANCE_MUTEX = None
+
+
+def claim_single_instance() -> bool:
+    """Keep one companion alive per Windows user session."""
+    global _INSTANCE_MUTEX
+    if sys.platform != "win32":
+        return True
+
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    _INSTANCE_MUTEX = kernel32.CreateMutexW(None, False, "Local\\PixelPresenceCompanion")
+    if not _INSTANCE_MUTEX:
+        return True
+    return ctypes.get_last_error() != 183
+
 
 # ---------------------------------------------------------------------------
 # Where the state lives. The Hermes hook and the CLI write the same directory.
@@ -485,6 +503,9 @@ class Companion:
 
 
 def main() -> int:
+    if not claim_single_instance():
+        return 0
+
     sheet, layout = art_choice()
     if not sheet.is_file():
         print(f"pixelpresence: sprite sheet not found: {sheet}", file=sys.stderr)
