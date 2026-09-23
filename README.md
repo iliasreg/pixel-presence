@@ -36,7 +36,8 @@ python3 companion/pixel_presence.py
 ```
 
 No window frame — just the character, and a caption when there is something to
-say.
+say. On Windows, only one companion runs per user session; later launches exit
+without opening another window.
 
 | | |
 |---|---|
