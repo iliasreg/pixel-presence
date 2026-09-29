@@ -18,147 +18,46 @@ fails open because it must never block a tool call.
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import re
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 
-# Where the companion keeps its state. Resolved rather than hardcoded, so the
-# tool works on either side of the WSL/Windows boundary; PIXELPRESENCE_DIR
-# overrides it outright.
-WINDOWS_USERS = Path("/mnt/c/Users")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-STATES = ("idle", "thinking", "working", "waiting", "success", "error")
-
-# Which state wins when several sessions are live. The companion applies the
-# same order, so `sessions` can explain what it is showing.
-PRIORITY = {
-    "waiting": 0,
-    "error": 1,
-    "working": 2,
-    "success": 3,
-    "thinking": 4,
-    "idle": 5,
-}
-
-
-def windows_profile() -> Path | None:
-    """The Windows user profile, seen from either side of the boundary.
-
-    The companion runs on Windows, so a Linux home directory is the wrong
-    place to look when this is invoked from WSL.
-    """
-    if os.environ.get("USERPROFILE"):
-        return Path(os.environ["USERPROFILE"])
-    if os.name == "nt" or not WINDOWS_USERS.is_dir():
-        return None
-
-    with_state = [
-        profile
-        for profile in sorted(WINDOWS_USERS.iterdir())
-        if (profile / ".pixelpresence").is_dir()
-    ]
-    return with_state[0] if len(with_state) == 1 else None
-
-
-def state_dir() -> Path:
-    override = os.environ.get("PIXELPRESENCE_DIR")
-    if override:
-        return Path(override)
-    profile = windows_profile()
-    return (profile / ".pixelpresence") if profile else Path.home() / ".pixelpresence"
-
-
-def sessions_dir() -> Path:
-    return state_dir() / "sessions"
-
-
-def safe_session_id(raw: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", raw).strip("._")
-    if not safe:
-        raise ValueError("session id has no usable characters")
-    return safe[:96]
-
-
-def build_event(state: str, label: str | None, session: str, agent: str) -> dict:
-    return {
-        "version": 1,
-        "type": "agent.state",
-        "agent": agent,
-        "state": state,
-        "label": label,
-        "session_id": session,
-        "profile": None,
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-    }
-
-
-def write_event(target: Path, event: dict) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    scratch = target.with_suffix(".tmp")
-    scratch.write_text(json.dumps(event))
-    os.replace(scratch, target)
-
-
-def read_events() -> list[tuple[Path, dict, float]]:
-    """Every parseable session file, with its age in seconds."""
-    directory = sessions_dir()
-    if not directory.is_dir():
-        return []
-
-    now = time.time()
-    events = []
-    for path in sorted(directory.glob("*.json")):
-        try:
-            event = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        if event.get("version") != 1 or event.get("state") not in STATES:
-            continue
-        events.append((path, event, now - path.stat().st_mtime))
-    return events
+from pixelpresence_state import STATES, clear_state, list_sessions, set_state
 
 
 def cmd_state(args: argparse.Namespace) -> int:
-    session = safe_session_id(args.session)
-    label = args.label or None
-    write_event(
-        sessions_dir() / f"{session}.json",
-        build_event(args.state, label, session, args.agent),
-    )
+    set_state(args.state, args.session, agent=args.agent, label=args.label)
     return 0
 
 
 def cmd_clear(args: argparse.Namespace) -> int:
-    session = safe_session_id(args.session)
-    target = sessions_dir() / f"{session}.json"
-    try:
-        target.unlink()
-    except FileNotFoundError:
-        pass
+    clear_state(args.session)
     return 0
 
 
 def cmd_sessions(args: argparse.Namespace) -> int:
-    events = read_events()
-    if not events:
+    result = list_sessions(args.ttl)
+    sessions = result["sessions"]
+    if not sessions:
         print("no live sessions")
         return 0
 
-    live = [(p, e, age) for p, e, age in events if age <= args.ttl]
-    for path, event, age in sorted(live, key=lambda row: PRIORITY[row[1]["state"]]):
-        label = f" ({event['label']})" if event.get("label") else ""
-        print(f"{event['state']:<9}{label:<24} {event['agent']:<10} age {age:5.1f}s  {path.stem}")
+    for session in sessions:
+        if session["stale"]:
+            continue
+        label = f" ({session['label']})" if session["label"] else ""
+        print(
+            f"{session['state']:<9}{label:<24} {session['agent']:<10} "
+            f"age {session['age_seconds']:5.1f}s  {session['session_id']}"
+        )
 
-    stale = len(events) - len(live)
+    stale = sum(session["stale"] for session in sessions)
     if stale:
         print(f"{stale} session(s) older than {args.ttl:.0f}s and ignored by the companion")
-    winner = min(live, key=lambda row: PRIORITY[row[1]["state"]]) if live else None
-    if winner:
-        print(f"showing: {winner[1]['state']}")
+    if result["winner"]:
+        print(f"showing: {result['winner']['state']}")
     return 0
 
 

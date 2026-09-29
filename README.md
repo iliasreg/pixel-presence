@@ -8,7 +8,8 @@ system-wide, no packaging or signing.
 
 ## Requirements
 
-Python 3.8+ and `tkinter`, both from the standard library. Nothing else.
+Python 3.10+ and `tkinter`, both from the standard library. The MCP server is
+optional and needs one extra dependency; see [MCP server](#mcp-server).
 
 ```
 Debian/Ubuntu   sudo apt install python3-tk
@@ -96,6 +97,80 @@ python3 cli/pixel-presence.py clear --session deploy
 python3 cli/pixel-presence.py sessions
 ```
 
+## MCP server
+
+The optional local stdio server lets MCP clients report and inspect session state.
+It does not detect harness lifecycle events; configure the harness to call
+`set_state` when its state changes and `clear_state` when its session ends.
+
+Install the optional dependency into the Python environment that will run the
+server:
+
+```bash
+python3 -m pip install -r requirements-mcp.txt
+```
+
+Configure an MCP client to launch `python3 /absolute/path/to/pixel-presence/mcp_server.py`.
+The repository path must be absolute because the client may choose another
+working directory. The server exposes three tools:
+
+- `set_state(state, session_id, agent="mcp", label=null)` — states are `idle`,
+  `thinking`, `working`, `waiting`, `success`, or `error`. Use a stable unique
+  `session_id` for each active run.
+- `clear_state(session_id)` — clear one session; safe to call more than once.
+- `list_sessions()` — show sessions, stale status, and the live winner.
+
+The server uses the same protocol files and `PIXELPRESENCE_DIR` override as the
+CLI and companion. Set `PIXELPRESENCE_SESSION_TTL_SECONDS` to change the default
+600-second session TTL.
+
+Example configurations (replace `/absolute/path/to/pixel-presence` with the
+checkout path):
+
+Claude Code:
+
+```bash
+claude mcp add pixelpresence -- python3 /absolute/path/to/pixel-presence/mcp_server.py
+```
+
+Codex CLI (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.pixelpresence]
+command = "python3"
+args = ["/absolute/path/to/pixel-presence/mcp_server.py"]
+```
+
+Gemini CLI (`~/.gemini/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "pixelpresence": {
+      "command": "python3",
+      "args": ["/absolute/path/to/pixel-presence/mcp_server.py"]
+    }
+  }
+}
+```
+
+Cursor (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "pixelpresence": {
+      "command": "python3",
+      "args": ["/absolute/path/to/pixel-presence/mcp_server.py"]
+    }
+  }
+}
+```
+
+These clients document local stdio MCP support. This repository has protocol-level
+verification, but client-specific launches have not been runtime-tested here.
+Other MCP clients can connect if they support stdio and MCP tools.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -123,7 +198,10 @@ install.sh                   prerequisites, then the one question
 companion/pixel_presence.py  window, animation, state loop
 companion/launch.ps1         starts it on Windows if not already running
 cli/pixel-presence.py        state / clear / sessions for any caller
+pixelpresence_state.py       shared protocol operations for CLI and MCP
+mcp_server.py                optional local stdio MCP server
 adapters/hermes/             maps lifecycle events to states, starts the companion
+tests/                       protocol and MCP tests
 assets/                      the sprite sheet that ships
 ```
 
