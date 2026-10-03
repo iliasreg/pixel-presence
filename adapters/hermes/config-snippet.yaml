@@ -3,7 +3,7 @@
 # Paste this block into ~/.hermes/config.yaml (or apply it with the `hermes
 # config set` lines in the README) to feed Hermes lifecycle events into the
 # companion. One script serves every event; it resolves the state from
-# `hook_event_name`.
+# `hook_event_name`. These hooks only write state; start the companion manually.
 #
 # `timeout: 5` keeps a stuck script from stalling a tool call. The hook fails
 # open: a crash or timeout logs a warning and the agent continues.

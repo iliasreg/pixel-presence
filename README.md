@@ -18,7 +18,9 @@ cd pixel-presence
 ./install.sh
 ```
 
-The installer can connect PixelPresence to Hermes. To start the companion yourself:
+The companion never starts automatically with an agent session. The installer leaves Hermes unchanged by default; opt in to state updates if you want Hermes to drive a manually started companion.
+
+To start it yourself:
 
 ```bash
 python3 companion/pixel_presence.py

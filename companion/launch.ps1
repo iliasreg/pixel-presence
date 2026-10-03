@@ -1,8 +1,7 @@
 # Start the PixelPresence companion if it is not already running.
 #
-# The Hermes hook runs this at every session start, so it is safe to call often:
-# it exits immediately when a companion is already alive. It is also the way to
-# start the companion by hand on Windows.
+# Run this manually on Windows. It exits immediately when a companion is
+# already alive; Hermes lifecycle hooks never invoke it.
 
 $ErrorActionPreference = 'SilentlyContinue'
 

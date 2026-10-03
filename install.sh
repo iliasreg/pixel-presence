@@ -5,8 +5,8 @@
 #
 #     ./install.sh
 #
-# It asks one question: whether to launch the companion with your agent. There
-# is nothing to build and nothing to install into the system.
+# It optionally connects Hermes state updates. The companion starts manually.
+# There is nothing to build or install into the system.
 #
 # Set PIXELPRESENCE_ART to use your own sprite sheet; see the README.
 
@@ -49,18 +49,18 @@ say ""
 # The one question
 # ---------------------------------------------------------------------------
 
-say "Launch the companion with your agent?"
+say "Connect Hermes state updates?"
 say ""
-say "  yes (default)  starting an agent session starts the companion too"
-say "  no             you start it yourself, whenever you want it"
+say "  yes           Hermes updates the state of a manually started companion"
+say "  no (default)  leave the Hermes configuration unchanged"
 say ""
-printf 'Launch with the agent? [Y/n] '
+printf 'Connect Hermes? [y/N] '
 answer=""
 read -r answer || answer=""
 
 case "$answer" in
-[nN]*) WITH_AGENT=no ;;
-*)     WITH_AGENT=yes ;;
+[yY]*) WITH_AGENT=yes ;;
+*)     WITH_AGENT=no ;;
 esac
 
 if [ "$WITH_AGENT" = "yes" ]; then
@@ -88,9 +88,8 @@ if [ "$WITH_AGENT" = "yes" ]; then
     say "    HERMES_ACCEPT_HOOKS=1 hermes chat -q hi"
     say "    hermes hooks doctor"
     say ""
-    say "A new agent session is needed for the hooks to take effect. From then on"
-    say "the companion starts with every session, and it is started now if it is"
-    say "not already running."
+    say "A new agent session is needed for the state hooks to take effect."
+    say "This integration does not start the companion. Launch it yourself."
     say ""
     say "To start it by hand:  python3 $COMPANION"
 else
